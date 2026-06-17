@@ -2,105 +2,30 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from hashlib import sha256
-from typing import List, Optional, Literal
+from typing import List, Optional
 import uuid
 
 from fastapi import FastAPI, HTTPException, status
-from pydantic import BaseModel, Field
+from models import (
+    UsuarioEntrada, Usuario, LoginEntrada,
+    LivroEntrada, Livro,
+    EmprestimoEntrada, Emprestimo, RenovarEmprestimoEntrada,
+    ReservaEntrada, Reserva,
+    Multa, TipoUsuario
+)
+from database import get_conn, init_db
 
 
 app = FastAPI(title="API Biblioteca Escolar", version="1.0.0")
 
-
-
-TipoUsuario = Literal["aluno", "professor", "funcionario"]
-
-
-class UsuarioEntrada(BaseModel):
-    nome: str
-    matricula: str
-    tipo: TipoUsuario
-    email: str
-    senha: str
-
-
-class Usuario(UsuarioEntrada):
-    id: str
-    senha: str
-    ativo: bool = True
-
-
-class LoginEntrada(BaseModel):
-    matricula: str
-    senha: str
-
-
-class LivroEntrada(BaseModel):
-    titulo: str
-    autor: str
-    isbn: str
-    quantidade_total: int = Field(gt=0)
-
-
-class Livro(LivroEntrada):
-    id: str
-    quantidade_disponivel: int
-    ativo: bool = True
-
-
-class EmprestimoEntrada(BaseModel):
-    usuario_id: str
-    livro_id: str
-
-
-class Emprestimo(BaseModel):
-    id: str
-    usuario_id: str
-    livro_id: str
-    data_emprestimo: str
-    data_prevista_devolucao: str
-    data_devolucao: Optional[str] = None
-    status: Literal["ativo", "devolvido"] = "ativo"
-    multa: float = 0.0
-
-
-class RenovarEmprestimoEntrada(BaseModel):
-    dias_adicionais: int = Field(default=7, ge=1, le=30)
-
-
-class ReservaEntrada(BaseModel):
-    usuario_id: str
-    livro_id: str
-
-
-class Reserva(BaseModel):
-    id: str
-    usuario_id: str
-    livro_id: str
-    data_reserva: str
-    status: Literal["ativa", "cancelada", "atendida"] = "ativa"
-
-
-class Multa(BaseModel):
-    id: str
-    emprestimo_id: str
-    usuario_id: str
-    livro_id: str
-    valor: float
-    dias_atraso: int
-    data_registro: str
-
-
-
-usuarios_db: List[Usuario] = []
-livros_db: List[Livro] = []
-emprestimos_db: List[Emprestimo] = []
-reservas_db: List[Reserva] = []
-multas_db: List[Multa] = []
-
 DIAS_PADRAO_EMPRESTIMO = 7
 LIMITE_EMPRESTIMOS_ATIVOS = 3
 VALOR_MULTA_POR_DIA = 1.50
+
+
+@app.on_event("startup")
+def startup_event():
+    init_db()
 
 
 
@@ -113,69 +38,168 @@ def agora() -> datetime:
 
 
 def encontrar_usuario(usuario_id: str) -> Usuario:
-    for usuario in usuarios_db:
-        if usuario.id == usuario_id:
-            return usuario
-    raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    with get_conn() as conn:
+        cursor = conn.execute("SELECT * FROM usuarios WHERE id = ?", (usuario_id,))
+        row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    return Usuario(
+        id=row["id"],
+        nome=row["nome"],
+        matricula=row["matricula"],
+        tipo=row["tipo"],
+        email=row["email"],
+        senha=row["senha"],
+        ativo=bool(row["ativo"])
+    )
 
 
 def encontrar_usuario_por_matricula(matricula: str) -> Usuario:
-    for usuario in usuarios_db:
-        if usuario.matricula == matricula:
-            return usuario
-    raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    with get_conn() as conn:
+        cursor = conn.execute("SELECT * FROM usuarios WHERE matricula = ?", (matricula,))
+        row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    return Usuario(
+        id=row["id"],
+        nome=row["nome"],
+        matricula=row["matricula"],
+        tipo=row["tipo"],
+        email=row["email"],
+        senha=row["senha"],
+        ativo=bool(row["ativo"])
+    )
 
 
 def encontrar_livro(livro_id: str) -> Livro:
-    for livro in livros_db:
-        if livro.id == livro_id:
-            return livro
-    raise HTTPException(status_code=404, detail="Livro não encontrado")
+    with get_conn() as conn:
+        cursor = conn.execute("SELECT * FROM livros WHERE id = ?", (livro_id,))
+        row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Livro não encontrado")
+    return Livro(
+        id=row["id"],
+        titulo=row["titulo"],
+        autor=row["autor"],
+        isbn=row["isbn"],
+        quantidade_total=row["quantidade_total"],
+        quantidade_disponivel=row["quantidade_disponivel"],
+        ativo=bool(row["ativo"])
+    )
 
 
 def encontrar_emprestimo(emprestimo_id: str) -> Emprestimo:
-    for emprestimo in emprestimos_db:
-        if emprestimo.id == emprestimo_id:
-            return emprestimo
-    raise HTTPException(status_code=404, detail="Empréstimo não encontrado")
+    with get_conn() as conn:
+        cursor = conn.execute("SELECT * FROM emprestimos WHERE id = ?", (emprestimo_id,))
+        row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Empréstimo não encontrado")
+    return Emprestimo(
+        id=row["id"],
+        usuario_id=row["usuario_id"],
+        livro_id=row["livro_id"],
+        data_emprestimo=row["data_emprestimo"],
+        data_prevista_devolucao=row["data_prevista_devolucao"],
+        data_devolucao=row["data_devolucao"],
+        status=row["status"],
+        multa=row["multa"]
+    )
 
 
 def encontrar_reserva(reserva_id: str) -> Reserva:
-    for reserva in reservas_db:
-        if reserva.id == reserva_id:
-            return reserva
-    raise HTTPException(status_code=404, detail="Reserva não encontrada")
+    with get_conn() as conn:
+        cursor = conn.execute("SELECT * FROM reservas WHERE id = ?", (reserva_id,))
+        row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Reserva não encontrada")
+    return Reserva(
+        id=row["id"],
+        usuario_id=row["usuario_id"],
+        livro_id=row["livro_id"],
+        data_reserva=row["data_reserva"],
+        status=row["status"]
+    )
 
 
 def verificar_matricula_duplicada(matricula: str, ignorar_id: Optional[str] = None) -> None:
-    for usuario in usuarios_db:
-        if usuario.matricula == matricula and usuario.id != ignorar_id:
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "SELECT * FROM usuarios WHERE matricula = ? AND id != ?",
+            (matricula, ignorar_id or "")
+        )
+        if cursor.fetchone():
             raise HTTPException(status_code=409, detail="Já existe um usuário com essa matrícula")
 
 
 def verificar_isbn_duplicado(isbn: str, ignorar_id: Optional[str] = None) -> None:
-    for livro in livros_db:
-        if livro.isbn == isbn and livro.id != ignorar_id:
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "SELECT * FROM livros WHERE isbn = ? AND id != ?",
+            (isbn, ignorar_id or "")
+        )
+        if cursor.fetchone():
             raise HTTPException(status_code=409, detail="Já existe um livro com esse ISBN")
 
 
 def emprestimos_ativos_do_usuario(usuario_id: str) -> List[Emprestimo]:
-    return [e for e in emprestimos_db if e.usuario_id == usuario_id and e.status == "ativo"]
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "SELECT * FROM emprestimos WHERE usuario_id = ? AND status = 'ativo'",
+            (usuario_id,)
+        )
+        rows = cursor.fetchall()
+    return [
+        Emprestimo(
+            id=r["id"],
+            usuario_id=r["usuario_id"],
+            livro_id=r["livro_id"],
+            data_emprestimo=r["data_emprestimo"],
+            data_prevista_devolucao=r["data_prevista_devolucao"],
+            data_devolucao=r["data_devolucao"],
+            status=r["status"],
+            multa=r["multa"]
+        )
+        for r in rows
+    ]
 
 
 def emprestimo_ativo_do_livro(livro_id: str) -> bool:
-    return any(e for e in emprestimos_db if e.livro_id == livro_id and e.status == "ativo")
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "SELECT COUNT(*) as count FROM emprestimos WHERE livro_id = ? AND status = 'ativo'",
+            (livro_id,)
+        )
+        return cursor.fetchone()["count"] > 0
 
 
 def reservas_ativas_do_livro(livro_id: str) -> List[Reserva]:
-    return [r for r in reservas_db if r.livro_id == livro_id and r.status == "ativa"]
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "SELECT * FROM reservas WHERE livro_id = ? AND status = 'ativa'",
+            (livro_id,)
+        )
+        rows = cursor.fetchall()
+    return [
+        Reserva(
+            id=r["id"],
+            usuario_id=r["usuario_id"],
+            livro_id=r["livro_id"],
+            data_reserva=r["data_reserva"],
+            status=r["status"]
+        )
+        for r in rows
+    ]
 
 
 def tem_atraso(usuario_id: str) -> bool:
     hoje = agora()
-    for emprestimo in emprestimos_db:
-        if emprestimo.usuario_id == usuario_id and emprestimo.status == "ativo":
-            prazo = datetime.fromisoformat(emprestimo.data_prevista_devolucao)
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "SELECT * FROM emprestimos WHERE usuario_id = ? AND status = 'ativo'",
+            (usuario_id,)
+        )
+        for row in cursor.fetchall():
+            prazo = datetime.fromisoformat(row["data_prevista_devolucao"])
             if hoje > prazo:
                 return True
     return False
@@ -215,27 +239,54 @@ def login(dados: LoginEntrada):
 @app.post("/usuarios", response_model=Usuario, status_code=status.HTTP_201_CREATED)
 def criar_usuario(dados: UsuarioEntrada):
     verificar_matricula_duplicada(dados.matricula)
-    novo = Usuario(
-        id=str(uuid.uuid4()),
+    novo_id = str(uuid.uuid4())
+    
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO usuarios (id, nome, matricula, tipo, email, senha, ativo) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (novo_id, dados.nome, dados.matricula, dados.tipo, dados.email, hash_senha(dados.senha), 1)
+        )
+        conn.commit()
+    
+    return Usuario(
+        id=novo_id,
         nome=dados.nome,
         matricula=dados.matricula,
         tipo=dados.tipo,
         email=dados.email,
         senha=hash_senha(dados.senha),
-        ativo=True,
+        ativo=True
     )
-    usuarios_db.append(novo)
-    return novo
 
 
 @app.get("/usuarios", response_model=List[Usuario])
 def listar_usuarios(ativo: Optional[bool] = None, tipo: Optional[TipoUsuario] = None):
-    resultado = usuarios_db
-    if ativo is not None:
-        resultado = [u for u in resultado if u.ativo == ativo]
-    if tipo is not None:
-        resultado = [u for u in resultado if u.tipo == tipo]
-    return resultado
+    with get_conn() as conn:
+        query = "SELECT * FROM usuarios WHERE 1=1"
+        params = []
+        
+        if ativo is not None:
+            query += " AND ativo = ?"
+            params.append(1 if ativo else 0)
+        if tipo is not None:
+            query += " AND tipo = ?"
+            params.append(tipo)
+        
+        cursor = conn.execute(query, params)
+        rows = cursor.fetchall()
+    
+    return [
+        Usuario(
+            id=r["id"],
+            nome=r["nome"],
+            matricula=r["matricula"],
+            tipo=r["tipo"],
+            email=r["email"],
+            senha=r["senha"],
+            ativo=bool(r["ativo"])
+        )
+        for r in rows
+    ]
 
 
 @app.get("/usuarios/{usuario_id}", response_model=Usuario)
@@ -247,12 +298,23 @@ def buscar_usuario(usuario_id: str):
 def editar_usuario(usuario_id: str, dados: UsuarioEntrada):
     usuario = encontrar_usuario(usuario_id)
     verificar_matricula_duplicada(dados.matricula, ignorar_id=usuario_id)
-    usuario.nome = dados.nome
-    usuario.matricula = dados.matricula
-    usuario.tipo = dados.tipo
-    usuario.email = dados.email
-    usuario.senha = hash_senha(dados.senha)
-    return usuario
+    
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE usuarios SET nome = ?, matricula = ?, tipo = ?, email = ?, senha = ? WHERE id = ?",
+            (dados.nome, dados.matricula, dados.tipo, dados.email, hash_senha(dados.senha), usuario_id)
+        )
+        conn.commit()
+    
+    return Usuario(
+        id=usuario_id,
+        nome=dados.nome,
+        matricula=dados.matricula,
+        tipo=dados.tipo,
+        email=dados.email,
+        senha=hash_senha(dados.senha),
+        ativo=usuario.ativo
+    )
 
 
 @app.delete("/usuarios/{usuario_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -260,27 +322,42 @@ def remover_usuario(usuario_id: str):
     usuario = encontrar_usuario(usuario_id)
     if emprestimos_ativos_do_usuario(usuario_id):
         raise HTTPException(status_code=409, detail="Não é possível remover usuário com empréstimos ativos")
-    if any(r for r in reservas_db if r.usuario_id == usuario_id and r.status == "ativa"):
-        raise HTTPException(status_code=409, detail="Não é possível remover usuário com reservas ativas")
-    usuario.ativo = False
-    return
+    
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "SELECT COUNT(*) as count FROM reservas WHERE usuario_id = ? AND status = 'ativa'",
+            (usuario_id,)
+        )
+        if cursor.fetchone()["count"] > 0:
+            raise HTTPException(status_code=409, detail="Não é possível remover usuário com reservas ativas")
+    
+    with get_conn() as conn:
+        conn.execute("UPDATE usuarios SET ativo = 0 WHERE id = ?", (usuario_id,))
+        conn.commit()
 
 
 
 @app.post("/livros", response_model=Livro, status_code=status.HTTP_201_CREATED)
 def criar_livro(dados: LivroEntrada):
     verificar_isbn_duplicado(dados.isbn)
-    novo = Livro(
-        id=str(uuid.uuid4()),
+    novo_id = str(uuid.uuid4())
+    
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO livros (id, titulo, autor, isbn, quantidade_total, quantidade_disponivel, ativo) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (novo_id, dados.titulo, dados.autor, dados.isbn, dados.quantidade_total, dados.quantidade_total, 1)
+        )
+        conn.commit()
+    
+    return Livro(
+        id=novo_id,
         titulo=dados.titulo,
         autor=dados.autor,
         isbn=dados.isbn,
         quantidade_total=dados.quantidade_total,
         quantidade_disponivel=dados.quantidade_total,
-        ativo=True,
+        ativo=True
     )
-    livros_db.append(novo)
-    return novo
 
 
 @app.get("/livros", response_model=List[Livro])
@@ -290,19 +367,40 @@ def listar_livros(
     autor: Optional[str] = None,
     isbn: Optional[str] = None,
 ):
-    resultado = livros_db
-    if disponivel is not None:
-        resultado = [l for l in resultado if (l.quantidade_disponivel > 0) == disponivel]
-    if titulo:
-        t = titulo.lower()
-        resultado = [l for l in resultado if t in l.titulo.lower()]
-    if autor:
-        a = autor.lower()
-        resultado = [l for l in resultado if a in l.autor.lower()]
-    if isbn:
-        i = isbn.lower()
-        resultado = [l for l in resultado if i in l.isbn.lower()]
-    return resultado
+    with get_conn() as conn:
+        query = "SELECT * FROM livros WHERE 1=1"
+        params = []
+        
+        if disponivel is not None:
+            if disponivel:
+                query += " AND quantidade_disponivel > 0"
+            else:
+                query += " AND quantidade_disponivel <= 0"
+        if titulo:
+            query += " AND LOWER(titulo) LIKE LOWER(?)"
+            params.append(f"%{titulo}%")
+        if autor:
+            query += " AND LOWER(autor) LIKE LOWER(?)"
+            params.append(f"%{autor}%")
+        if isbn:
+            query += " AND LOWER(isbn) LIKE LOWER(?)"
+            params.append(f"%{isbn}%")
+        
+        cursor = conn.execute(query, params)
+        rows = cursor.fetchall()
+    
+    return [
+        Livro(
+            id=r["id"],
+            titulo=r["titulo"],
+            autor=r["autor"],
+            isbn=r["isbn"],
+            quantidade_total=r["quantidade_total"],
+            quantidade_disponivel=r["quantidade_disponivel"],
+            ativo=bool(r["ativo"])
+        )
+        for r in rows
+    ]
 
 
 @app.get("/livros/{livro_id}", response_model=Livro)
@@ -322,12 +420,24 @@ def editar_livro(livro_id: str, dados: LivroEntrada):
             detail="A quantidade total não pode ser menor que a quantidade já emprestada",
         )
 
-    livro.titulo = dados.titulo
-    livro.autor = dados.autor
-    livro.isbn = dados.isbn
-    livro.quantidade_total = dados.quantidade_total
-    livro.quantidade_disponivel = dados.quantidade_total - copias_emprestadas
-    return livro
+    nova_quantidade_disponivel = dados.quantidade_total - copias_emprestadas
+    
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE livros SET titulo = ?, autor = ?, isbn = ?, quantidade_total = ?, quantidade_disponivel = ? WHERE id = ?",
+            (dados.titulo, dados.autor, dados.isbn, dados.quantidade_total, nova_quantidade_disponivel, livro_id)
+        )
+        conn.commit()
+    
+    return Livro(
+        id=livro_id,
+        titulo=dados.titulo,
+        autor=dados.autor,
+        isbn=dados.isbn,
+        quantidade_total=dados.quantidade_total,
+        quantidade_disponivel=nova_quantidade_disponivel,
+        ativo=livro.ativo
+    )
 
 
 @app.delete("/livros/{livro_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -337,8 +447,10 @@ def remover_livro(livro_id: str):
         raise HTTPException(status_code=409, detail="Não é possível remover livro com empréstimo ativo")
     if reservas_ativas_do_livro(livro_id):
         raise HTTPException(status_code=409, detail="Não é possível remover livro com reservas ativas")
-    livro.ativo = False
-    return
+    
+    with get_conn() as conn:
+        conn.execute("UPDATE livros SET ativo = 0 WHERE id = ?", (livro_id,))
+        conn.commit()
 
 
 
@@ -360,30 +472,59 @@ def realizar_emprestimo(dados: EmprestimoEntrada):
     if any(r for r in reservas_ativas_do_livro(livro.id) if r.usuario_id != usuario.id):
         raise HTTPException(status_code=409, detail="Livro reservado por outro usuário")
 
-    livro.quantidade_disponivel -= 1
+    novo_id = str(uuid.uuid4())
     data_emprestimo = agora()
     data_prevista = data_emprestimo + timedelta(days=DIAS_PADRAO_EMPRESTIMO)
 
-    novo = Emprestimo(
-        id=str(uuid.uuid4()),
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE livros SET quantidade_disponivel = quantidade_disponivel - 1 WHERE id = ?",
+            (livro.id,)
+        )
+        conn.execute(
+            "INSERT INTO emprestimos (id, usuario_id, livro_id, data_emprestimo, data_prevista_devolucao, data_devolucao, status, multa) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (novo_id, usuario.id, livro.id, data_emprestimo.isoformat(), data_prevista.isoformat(), None, "ativo", 0.0)
+        )
+        conn.commit()
+
+    return Emprestimo(
+        id=novo_id,
         usuario_id=usuario.id,
         livro_id=livro.id,
         data_emprestimo=data_emprestimo.isoformat(),
         data_prevista_devolucao=data_prevista.isoformat(),
         data_devolucao=None,
         status="ativo",
-        multa=0.0,
+        multa=0.0
     )
-    emprestimos_db.append(novo)
-    return novo
 
 
 @app.get("/emprestimos", response_model=List[Emprestimo])
-def listar_emprestimos(status_: Optional[Literal["ativo", "devolvido"]] = None):
-    resultado = emprestimos_db
-    if status_:
-        resultado = [e for e in resultado if e.status == status_]
-    return resultado
+def listar_emprestimos(status_: Optional[str] = None):
+    with get_conn() as conn:
+        query = "SELECT * FROM emprestimos WHERE 1=1"
+        params = []
+        
+        if status_:
+            query += " AND status = ?"
+            params.append(status_)
+        
+        cursor = conn.execute(query, params)
+        rows = cursor.fetchall()
+    
+    return [
+        Emprestimo(
+            id=r["id"],
+            usuario_id=r["usuario_id"],
+            livro_id=r["livro_id"],
+            data_emprestimo=r["data_emprestimo"],
+            data_prevista_devolucao=r["data_prevista_devolucao"],
+            data_devolucao=r["data_devolucao"],
+            status=r["status"],
+            multa=r["multa"]
+        )
+        for r in rows
+    ]
 
 
 @app.get("/emprestimos/{emprestimo_id}", response_model=Emprestimo)
@@ -398,28 +539,38 @@ def devolver_emprestimo(emprestimo_id: str):
         raise HTTPException(status_code=409, detail="Este empréstimo já foi devolvido")
 
     livro = encontrar_livro(emprestimo.livro_id)
-
     data_devolucao = agora()
-    emprestimo.data_devolucao = data_devolucao.isoformat()
-    emprestimo.status = "devolvido"
-    livro.quantidade_disponivel = min(livro.quantidade_total, livro.quantidade_disponivel + 1)
+    atraso, valor = calcular_multa(emprestimo.data_prevista_devolucao, data_devolucao.isoformat())
 
-    atraso, valor = calcular_multa(emprestimo.data_prevista_devolucao, emprestimo.data_devolucao)
-    emprestimo.multa = valor
-
-    if atraso > 0:
-        multa = Multa(
-            id=str(uuid.uuid4()),
-            emprestimo_id=emprestimo.id,
-            usuario_id=emprestimo.usuario_id,
-            livro_id=emprestimo.livro_id,
-            valor=valor,
-            dias_atraso=atraso,
-            data_registro=data_devolucao.isoformat(),
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE emprestimos SET data_devolucao = ?, status = ?, multa = ? WHERE id = ?",
+            (data_devolucao.isoformat(), "devolvido", valor, emprestimo_id)
         )
-        multas_db.append(multa)
+        conn.execute(
+            "UPDATE livros SET quantidade_disponivel = MIN(quantidade_total, quantidade_disponivel + 1) WHERE id = ?",
+            (livro.id,)
+        )
+        
+        if atraso > 0:
+            multa_id = str(uuid.uuid4())
+            conn.execute(
+                "INSERT INTO multas (id, emprestimo_id, usuario_id, livro_id, valor, dias_atraso, data_registro) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (multa_id, emprestimo_id, emprestimo.usuario_id, emprestimo.livro_id, valor, atraso, data_devolucao.isoformat())
+            )
+        
+        conn.commit()
 
-    return emprestimo
+    return Emprestimo(
+        id=emprestimo_id,
+        usuario_id=emprestimo.usuario_id,
+        livro_id=emprestimo.livro_id,
+        data_emprestimo=emprestimo.data_emprestimo,
+        data_prevista_devolucao=emprestimo.data_prevista_devolucao,
+        data_devolucao=data_devolucao.isoformat(),
+        status="devolvido",
+        multa=valor
+    )
 
 
 @app.put("/emprestimos/{emprestimo_id}/renovar", response_model=Emprestimo)
@@ -433,20 +584,68 @@ def renovar_emprestimo(emprestimo_id: str, dados: RenovarEmprestimoEntrada):
         raise HTTPException(status_code=409, detail="Não é possível renovar: há reserva ativa para este livro")
 
     nova_data = datetime.fromisoformat(emprestimo.data_prevista_devolucao) + timedelta(days=dados.dias_adicionais)
-    emprestimo.data_prevista_devolucao = nova_data.isoformat()
-    return emprestimo
+    
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE emprestimos SET data_prevista_devolucao = ? WHERE id = ?",
+            (nova_data.isoformat(), emprestimo_id)
+        )
+        conn.commit()
+    
+    return Emprestimo(
+        id=emprestimo_id,
+        usuario_id=emprestimo.usuario_id,
+        livro_id=emprestimo.livro_id,
+        data_emprestimo=emprestimo.data_emprestimo,
+        data_prevista_devolucao=nova_data.isoformat(),
+        data_devolucao=emprestimo.data_devolucao,
+        status=emprestimo.status,
+        multa=emprestimo.multa
+    )
 
 
 @app.get("/usuarios/{usuario_id}/emprestimos", response_model=List[Emprestimo])
 def emprestimos_do_usuario(usuario_id: str):
     encontrar_usuario(usuario_id)
-    return [e for e in emprestimos_db if e.usuario_id == usuario_id]
+    with get_conn() as conn:
+        cursor = conn.execute("SELECT * FROM emprestimos WHERE usuario_id = ?", (usuario_id,))
+        rows = cursor.fetchall()
+    
+    return [
+        Emprestimo(
+            id=r["id"],
+            usuario_id=r["usuario_id"],
+            livro_id=r["livro_id"],
+            data_emprestimo=r["data_emprestimo"],
+            data_prevista_devolucao=r["data_prevista_devolucao"],
+            data_devolucao=r["data_devolucao"],
+            status=r["status"],
+            multa=r["multa"]
+        )
+        for r in rows
+    ]
 
 
 @app.get("/livros/{livro_id}/emprestimos", response_model=List[Emprestimo])
 def emprestimos_do_livro(livro_id: str):
     encontrar_livro(livro_id)
-    return [e for e in emprestimos_db if e.livro_id == livro_id]
+    with get_conn() as conn:
+        cursor = conn.execute("SELECT * FROM emprestimos WHERE livro_id = ?", (livro_id,))
+        rows = cursor.fetchall()
+    
+    return [
+        Emprestimo(
+            id=r["id"],
+            usuario_id=r["usuario_id"],
+            livro_id=r["livro_id"],
+            data_emprestimo=r["data_emprestimo"],
+            data_prevista_devolucao=r["data_prevista_devolucao"],
+            data_devolucao=r["data_devolucao"],
+            status=r["status"],
+            multa=r["multa"]
+        )
+        for r in rows
+    ]
 
 
 
@@ -461,26 +660,56 @@ def criar_reserva(dados: ReservaEntrada):
         raise HTTPException(status_code=403, detail="Funcionários não realizam reservas")
     if livro.quantidade_disponivel > 0:
         raise HTTPException(status_code=409, detail="Reserva permitida apenas para livros indisponíveis")
-    if any(r for r in reservas_db if r.usuario_id == usuario.id and r.livro_id == livro.id and r.status == "ativa"):
-        raise HTTPException(status_code=409, detail="Usuário já possui reserva ativa para este livro")
+    
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "SELECT COUNT(*) as count FROM reservas WHERE usuario_id = ? AND livro_id = ? AND status = 'ativa'",
+            (usuario.id, livro.id)
+        )
+        if cursor.fetchone()["count"] > 0:
+            raise HTTPException(status_code=409, detail="Usuário já possui reserva ativa para este livro")
 
-    nova = Reserva(
-        id=str(uuid.uuid4()),
+    novo_id = str(uuid.uuid4())
+    
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO reservas (id, usuario_id, livro_id, data_reserva, status) VALUES (?, ?, ?, ?, ?)",
+            (novo_id, usuario.id, livro.id, agora().isoformat(), "ativa")
+        )
+        conn.commit()
+
+    return Reserva(
+        id=novo_id,
         usuario_id=usuario.id,
         livro_id=livro.id,
         data_reserva=agora().isoformat(),
-        status="ativa",
+        status="ativa"
     )
-    reservas_db.append(nova)
-    return nova
 
 
 @app.get("/reservas", response_model=List[Reserva])
-def listar_reservas(status_: Optional[Literal["ativa", "cancelada", "atendida"]] = None):
-    resultado = reservas_db
-    if status_:
-        resultado = [r for r in resultado if r.status == status_]
-    return resultado
+def listar_reservas(status_: Optional[str] = None):
+    with get_conn() as conn:
+        query = "SELECT * FROM reservas WHERE 1=1"
+        params = []
+        
+        if status_:
+            query += " AND status = ?"
+            params.append(status_)
+        
+        cursor = conn.execute(query, params)
+        rows = cursor.fetchall()
+    
+    return [
+        Reserva(
+            id=r["id"],
+            usuario_id=r["usuario_id"],
+            livro_id=r["livro_id"],
+            data_reserva=r["data_reserva"],
+            status=r["status"]
+        )
+        for r in rows
+    ]
 
 
 @app.get("/reservas/{reserva_id}", response_model=Reserva)
@@ -493,50 +722,110 @@ def cancelar_reserva(reserva_id: str):
     reserva = encontrar_reserva(reserva_id)
     if reserva.status != "ativa":
         raise HTTPException(status_code=409, detail="Só é possível cancelar reservas ativas")
-    reserva.status = "cancelada"
-    return
+    
+    with get_conn() as conn:
+        conn.execute("UPDATE reservas SET status = 'cancelada' WHERE id = ?", (reserva_id,))
+        conn.commit()
 
 
 @app.get("/usuarios/{usuario_id}/reservas", response_model=List[Reserva])
 def reservas_do_usuario(usuario_id: str):
     encontrar_usuario(usuario_id)
-    return [r for r in reservas_db if r.usuario_id == usuario_id]
+    with get_conn() as conn:
+        cursor = conn.execute("SELECT * FROM reservas WHERE usuario_id = ?", (usuario_id,))
+        rows = cursor.fetchall()
+    
+    return [
+        Reserva(
+            id=r["id"],
+            usuario_id=r["usuario_id"],
+            livro_id=r["livro_id"],
+            data_reserva=r["data_reserva"],
+            status=r["status"]
+        )
+        for r in rows
+    ]
 
 
 @app.get("/livros/{livro_id}/reservas", response_model=List[Reserva])
 def reservas_do_livro(livro_id: str):
     encontrar_livro(livro_id)
-    return [r for r in reservas_db if r.livro_id == livro_id]
-
+    with get_conn() as conn:
+        cursor = conn.execute("SELECT * FROM reservas WHERE livro_id = ?", (livro_id,))
+        rows = cursor.fetchall()
+    
+    return [
+        Reserva(
+            id=r["id"],
+            usuario_id=r["usuario_id"],
+            livro_id=r["livro_id"],
+            data_reserva=r["data_reserva"],
+            status=r["status"]
+        )
+        for r in rows
+    ]
 
 
 @app.get("/multas", response_model=List[Multa])
 def listar_multas():
-    return multas_db
+    with get_conn() as conn:
+        cursor = conn.execute("SELECT * FROM multas")
+        rows = cursor.fetchall()
+    
+    return [
+        Multa(
+            id=r["id"],
+            emprestimo_id=r["emprestimo_id"],
+            usuario_id=r["usuario_id"],
+            livro_id=r["livro_id"],
+            valor=r["valor"],
+            dias_atraso=r["dias_atraso"],
+            data_registro=r["data_registro"]
+        )
+        for r in rows
+    ]
 
 
 @app.get("/usuarios/{usuario_id}/multas", response_model=List[Multa])
 def multas_do_usuario(usuario_id: str):
     encontrar_usuario(usuario_id)
-    return [m for m in multas_db if m.usuario_id == usuario_id]
+    with get_conn() as conn:
+        cursor = conn.execute("SELECT * FROM multas WHERE usuario_id = ?", (usuario_id,))
+        rows = cursor.fetchall()
+    
+    return [
+        Multa(
+            id=r["id"],
+            emprestimo_id=r["emprestimo_id"],
+            usuario_id=r["usuario_id"],
+            livro_id=r["livro_id"],
+            valor=r["valor"],
+            dias_atraso=r["dias_atraso"],
+            data_registro=r["data_registro"]
+        )
+        for r in rows
+    ]
 
 
 @app.get("/notificacoes/atrasos")
 def listar_atrasos():
     hoje = agora()
     atrasos = []
-    for emprestimo in emprestimos_db:
-        if emprestimo.status == "ativo":
-            prazo = datetime.fromisoformat(emprestimo.data_prevista_devolucao)
+    
+    with get_conn() as conn:
+        cursor = conn.execute("SELECT * FROM emprestimos WHERE status = 'ativo'")
+        for row in cursor.fetchall():
+            prazo = datetime.fromisoformat(row["data_prevista_devolucao"])
             if hoje > prazo:
                 dias = max(0, (hoje.date() - prazo.date()).days)
                 atrasos.append(
                     {
-                        "emprestimo_id": emprestimo.id,
-                        "usuario_id": emprestimo.usuario_id,
-                        "livro_id": emprestimo.livro_id,
+                        "emprestimo_id": row["id"],
+                        "usuario_id": row["usuario_id"],
+                        "livro_id": row["livro_id"],
                         "dias_atraso": dias,
                         "multa_estimativa": round(dias * VALOR_MULTA_POR_DIA, 2),
                     }
                 )
+    
     return {"quantidade": len(atrasos), "atrasos": atrasos}
