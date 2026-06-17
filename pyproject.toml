@@ -1,7 +1,7 @@
 [project]
 name = "api-escolar"
 version = "0.1.0"
-description = "Add your description here"
+description = "Biblioteca Escolar Virtual"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
