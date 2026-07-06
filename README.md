@@ -14,3 +14,4 @@ O projeto foi desenvolvido utilizando Scrum
 ## Equipe 
 
 - Francisco Luan de Sousa Ferreira 
+- Samuel Lucas dos Santos Oliveira
