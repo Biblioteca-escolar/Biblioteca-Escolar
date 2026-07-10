@@ -231,8 +231,10 @@ def login(dados: LoginEntrada):
 
 
 
-@app.post("/usuarios", response_model=Usuario, status_code=status.HTTP_201_CREATED)
-def criar_usuario(dados: UsuarioEntrada):
+@app.post("/usuarios", response_model=Usuario, status_code=status.HTTP_201_CREATED, dependencies=[Depends(verificar_api_key)])
+def criar_usuario(
+    dados: UsuarioEntrada,
+):
     verificar_matricula_duplicada(dados.matricula)
     novo_id = str(uuid.uuid4())
     
@@ -254,8 +256,11 @@ def criar_usuario(dados: UsuarioEntrada):
     )
 
 
-@app.get("/usuarios", response_model=List[Usuario])
-def listar_usuarios(ativo: Optional[bool] = None, tipo: Optional[TipoUsuario] = None):
+@app.get("/usuarios", response_model=List[Usuario], dependencies=[Depends(verificar_api_key)])
+def listar_usuarios(
+    ativo: Optional[bool] = None,
+    tipo: Optional[TipoUsuario] = None,
+):
     with get_conn() as conn:
         query = "SELECT * FROM usuarios WHERE 1=1"
         params = []
@@ -284,13 +289,18 @@ def listar_usuarios(ativo: Optional[bool] = None, tipo: Optional[TipoUsuario] = 
     ]
 
 
-@app.get("/usuarios/{usuario_id}", response_model=Usuario)
-def buscar_usuario(usuario_id: str):
+@app.get("/usuarios/{usuario_id}", response_model=Usuario, dependencies=[Depends(verificar_api_key)])
+def buscar_usuario(
+    usuario_id: str,
+):
     return encontrar_usuario(usuario_id)
 
 
-@app.put("/usuarios/{usuario_id}", response_model=Usuario)
-def editar_usuario(usuario_id: str, dados: UsuarioEntrada):
+@app.put("/usuarios/{usuario_id}", response_model=Usuario, dependencies=[Depends(verificar_api_key)])
+def editar_usuario(
+    usuario_id: str,
+    dados: UsuarioEntrada,
+):
     usuario = encontrar_usuario(usuario_id)
     verificar_matricula_duplicada(dados.matricula, ignorar_id=usuario_id)
     
@@ -312,8 +322,10 @@ def editar_usuario(usuario_id: str, dados: UsuarioEntrada):
     )
 
 
-@app.delete("/usuarios/{usuario_id}", status_code=status.HTTP_204_NO_CONTENT)
-def remover_usuario(usuario_id: str):
+@app.delete("/usuarios/{usuario_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(verificar_api_key)])
+def remover_usuario(
+    usuario_id: str,
+):
     usuario = encontrar_usuario(usuario_id)
     if emprestimos_ativos_do_usuario(usuario_id):
         raise HTTPException(status_code=409, detail="Não é possível remover usuário com empréstimos ativos")
@@ -332,8 +344,10 @@ def remover_usuario(usuario_id: str):
 
 
 
-@app.post("/livros", response_model=Livro, status_code=status.HTTP_201_CREATED)
-def criar_livro(dados: LivroEntrada):
+@app.post("/livros", response_model=Livro, status_code=status.HTTP_201_CREATED, dependencies=[Depends(verificar_api_key)])
+def criar_livro(
+    dados: LivroEntrada,
+):
     verificar_isbn_duplicado(dados.isbn)
     novo_id = str(uuid.uuid4())
     
@@ -355,7 +369,7 @@ def criar_livro(dados: LivroEntrada):
     )
 
 
-@app.get("/livros", response_model=List[Livro])
+@app.get("/livros", response_model=List[Livro], dependencies=[Depends(verificar_api_key)])
 def listar_livros(
     disponivel: Optional[bool] = None,
     titulo: Optional[str] = None,
@@ -398,13 +412,18 @@ def listar_livros(
     ]
 
 
-@app.get("/livros/{livro_id}", response_model=Livro)
-def buscar_livro(livro_id: str):
+@app.get("/livros/{livro_id}", response_model=Livro, dependencies=[Depends(verificar_api_key)])
+def buscar_livro(
+    livro_id: str,
+):
     return encontrar_livro(livro_id)
 
 
-@app.put("/livros/{livro_id}", response_model=Livro)
-def editar_livro(livro_id: str, dados: LivroEntrada):
+@app.put("/livros/{livro_id}", response_model=Livro, dependencies=[Depends(verificar_api_key)])
+def editar_livro(
+    livro_id: str,
+    dados: LivroEntrada,
+):
     livro = encontrar_livro(livro_id)
     verificar_isbn_duplicado(dados.isbn, ignorar_id=livro_id)
 
@@ -435,8 +454,10 @@ def editar_livro(livro_id: str, dados: LivroEntrada):
     )
 
 
-@app.delete("/livros/{livro_id}", status_code=status.HTTP_204_NO_CONTENT)
-def remover_livro(livro_id: str):
+@app.delete("/livros/{livro_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(verificar_api_key)])
+def remover_livro(
+    livro_id: str,
+):
     livro = encontrar_livro(livro_id)
     if emprestimo_ativo_do_livro(livro_id):
         raise HTTPException(status_code=409, detail="Não é possível remover livro com empréstimo ativo")
@@ -449,8 +470,10 @@ def remover_livro(livro_id: str):
 
 
 
-@app.post("/emprestimos", response_model=Emprestimo, status_code=status.HTTP_201_CREATED)
-def realizar_emprestimo(dados: EmprestimoEntrada):
+@app.post("/emprestimos", response_model=Emprestimo, status_code=status.HTTP_201_CREATED, dependencies=[Depends(verificar_api_key)])
+def realizar_emprestimo(
+    dados: EmprestimoEntrada,
+):
     usuario = encontrar_usuario(dados.usuario_id)
     livro = encontrar_livro(dados.livro_id)
 
@@ -494,8 +517,10 @@ def realizar_emprestimo(dados: EmprestimoEntrada):
     )
 
 
-@app.get("/emprestimos", response_model=List[Emprestimo])
-def listar_emprestimos(status_: Optional[str] = None):
+@app.get("/emprestimos", response_model=List[Emprestimo], dependencies=[Depends(verificar_api_key)])
+def listar_emprestimos(
+    status_: Optional[str] = None,
+):
     with get_conn() as conn:
         query = "SELECT * FROM emprestimos WHERE 1=1"
         params = []
@@ -522,13 +547,17 @@ def listar_emprestimos(status_: Optional[str] = None):
     ]
 
 
-@app.get("/emprestimos/{emprestimo_id}", response_model=Emprestimo)
-def buscar_emprestimo(emprestimo_id: str):
+@app.get("/emprestimos/{emprestimo_id}", response_model=Emprestimo, dependencies=[Depends(verificar_api_key)])
+def buscar_emprestimo(
+    emprestimo_id: str,
+):
     return encontrar_emprestimo(emprestimo_id)
 
 
-@app.post("/emprestimos/{emprestimo_id}/devolver", response_model=Emprestimo)
-def devolver_emprestimo(emprestimo_id: str):
+@app.post("/emprestimos/{emprestimo_id}/devolver", response_model=Emprestimo, dependencies=[Depends(verificar_api_key)])
+def devolver_emprestimo(
+    emprestimo_id: str,
+):
     emprestimo = encontrar_emprestimo(emprestimo_id)
     if emprestimo.status == "devolvido":
         raise HTTPException(status_code=409, detail="Este empréstimo já foi devolvido")
@@ -568,8 +597,11 @@ def devolver_emprestimo(emprestimo_id: str):
     )
 
 
-@app.put("/emprestimos/{emprestimo_id}/renovar", response_model=Emprestimo)
-def renovar_emprestimo(emprestimo_id: str, dados: RenovarEmprestimoEntrada):
+@app.put("/emprestimos/{emprestimo_id}/renovar", response_model=Emprestimo, dependencies=[Depends(verificar_api_key)])
+def renovar_emprestimo(
+    emprestimo_id: str,
+    dados: RenovarEmprestimoEntrada,
+):
     emprestimo = encontrar_emprestimo(emprestimo_id)
     if emprestimo.status == "devolvido":
         raise HTTPException(status_code=409, detail="Não é possível renovar um empréstimo devolvido")
@@ -599,8 +631,10 @@ def renovar_emprestimo(emprestimo_id: str, dados: RenovarEmprestimoEntrada):
     )
 
 
-@app.get("/usuarios/{usuario_id}/emprestimos", response_model=List[Emprestimo])
-def emprestimos_do_usuario(usuario_id: str):
+@app.get("/usuarios/{usuario_id}/emprestimos", response_model=List[Emprestimo], dependencies=[Depends(verificar_api_key)])
+def emprestimos_do_usuario(
+    usuario_id: str,
+):
     encontrar_usuario(usuario_id)
     with get_conn() as conn:
         cursor = conn.execute("SELECT * FROM emprestimos WHERE usuario_id = ?", (usuario_id,))
@@ -621,8 +655,10 @@ def emprestimos_do_usuario(usuario_id: str):
     ]
 
 
-@app.get("/livros/{livro_id}/emprestimos", response_model=List[Emprestimo])
-def emprestimos_do_livro(livro_id: str):
+@app.get("/livros/{livro_id}/emprestimos", response_model=List[Emprestimo], dependencies=[Depends(verificar_api_key)])
+def emprestimos_do_livro(
+    livro_id: str,
+):
     encontrar_livro(livro_id)
     with get_conn() as conn:
         cursor = conn.execute("SELECT * FROM emprestimos WHERE livro_id = ?", (livro_id,))
@@ -644,8 +680,10 @@ def emprestimos_do_livro(livro_id: str):
 
 
 
-@app.post("/reservas", response_model=Reserva, status_code=status.HTTP_201_CREATED)
-def criar_reserva(dados: ReservaEntrada):
+@app.post("/reservas", response_model=Reserva, status_code=status.HTTP_201_CREATED, dependencies=[Depends(verificar_api_key)])
+def criar_reserva(
+    dados: ReservaEntrada,
+):
     usuario = encontrar_usuario(dados.usuario_id)
     livro = encontrar_livro(dados.livro_id)
 
@@ -682,8 +720,10 @@ def criar_reserva(dados: ReservaEntrada):
     )
 
 
-@app.get("/reservas", response_model=List[Reserva])
-def listar_reservas(status_: Optional[str] = None):
+@app.get("/reservas", response_model=List[Reserva], dependencies=[Depends(verificar_api_key)])
+def listar_reservas(
+    status_: Optional[str] = None,
+):
     with get_conn() as conn:
         query = "SELECT * FROM reservas WHERE 1=1"
         params = []
@@ -707,13 +747,17 @@ def listar_reservas(status_: Optional[str] = None):
     ]
 
 
-@app.get("/reservas/{reserva_id}", response_model=Reserva)
-def buscar_reserva(reserva_id: str):
+@app.get("/reservas/{reserva_id}", response_model=Reserva, dependencies=[Depends(verificar_api_key)])
+def buscar_reserva(
+    reserva_id: str,
+):
     return encontrar_reserva(reserva_id)
 
 
-@app.delete("/reservas/{reserva_id}", status_code=status.HTTP_204_NO_CONTENT)
-def cancelar_reserva(reserva_id: str):
+@app.delete("/reservas/{reserva_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(verificar_api_key)])
+def cancelar_reserva(
+    reserva_id: str,
+):
     reserva = encontrar_reserva(reserva_id)
     if reserva.status != "ativa":
         raise HTTPException(status_code=409, detail="Só é possível cancelar reservas ativas")
@@ -723,8 +767,10 @@ def cancelar_reserva(reserva_id: str):
         conn.commit()
 
 
-@app.get("/usuarios/{usuario_id}/reservas", response_model=List[Reserva])
-def reservas_do_usuario(usuario_id: str):
+@app.get("/usuarios/{usuario_id}/reservas", response_model=List[Reserva], dependencies=[Depends(verificar_api_key)])
+def reservas_do_usuario(
+    usuario_id: str,
+):
     encontrar_usuario(usuario_id)
     with get_conn() as conn:
         cursor = conn.execute("SELECT * FROM reservas WHERE usuario_id = ?", (usuario_id,))
@@ -742,8 +788,10 @@ def reservas_do_usuario(usuario_id: str):
     ]
 
 
-@app.get("/livros/{livro_id}/reservas", response_model=List[Reserva])
-def reservas_do_livro(livro_id: str):
+@app.get("/livros/{livro_id}/reservas", response_model=List[Reserva], dependencies=[Depends(verificar_api_key)])
+def reservas_do_livro(
+    livro_id: str,
+):
     encontrar_livro(livro_id)
     with get_conn() as conn:
         cursor = conn.execute("SELECT * FROM reservas WHERE livro_id = ?", (livro_id,))
@@ -761,7 +809,7 @@ def reservas_do_livro(livro_id: str):
     ]
 
 
-@app.get("/multas", response_model=List[Multa])
+@app.get("/multas", response_model=List[Multa], dependencies=[Depends(verificar_api_key)])
 def listar_multas():
     with get_conn() as conn:
         cursor = conn.execute("SELECT * FROM multas")
@@ -781,8 +829,10 @@ def listar_multas():
     ]
 
 
-@app.get("/usuarios/{usuario_id}/multas", response_model=List[Multa])
-def multas_do_usuario(usuario_id: str):
+@app.get("/usuarios/{usuario_id}/multas", response_model=List[Multa], dependencies=[Depends(verificar_api_key)])
+def multas_do_usuario(
+    usuario_id: str,
+):
     encontrar_usuario(usuario_id)
     with get_conn() as conn:
         cursor = conn.execute("SELECT * FROM multas WHERE usuario_id = ?", (usuario_id,))
@@ -802,7 +852,7 @@ def multas_do_usuario(usuario_id: str):
     ]
 
 
-@app.get("/notificacoes/atrasos")
+@app.get("/notificacoes/atrasos", dependencies=[Depends(verificar_api_key)])
 def listar_atrasos():
     hoje = agora()
     atrasos = []
