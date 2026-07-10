@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from hashlib import sha256
 from typing import List, Optional
 import uuid
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Depends
 from models import (
     UsuarioEntrada, Usuario, LoginEntrada,
     LivroEntrada, Livro,
@@ -14,6 +13,7 @@ from models import (
     Multa, TipoUsuario
 )
 from database import get_conn, init_db
+from security import verificar_api_key, hash_senha
 
 
 app = FastAPI(title="API Biblioteca Escolar", version="1.0.0")
@@ -26,11 +26,6 @@ VALOR_MULTA_POR_DIA = 1.50
 @app.on_event("startup")
 def startup_event():
     init_db()
-
-
-
-def hash_senha(senha: str) -> str:
-    return sha256(senha.encode("utf-8")).hexdigest()
 
 
 def agora() -> datetime:
