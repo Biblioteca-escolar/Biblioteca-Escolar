@@ -1,4 +1,4 @@
-# Sistema Biblioteca-Escolar
+# Sistema Biblioteca Escolar
 
 Sistema desenvolvido para a disciplina de Projeto e Desenvolvimento de Software.
 
@@ -12,7 +12,7 @@ Sistema desenvolvido para a disciplina de Projeto e Desenvolvimento de Software.
 
 ## Metodologia
 
-O projeto foi desenvolvido utilizando a metodologia Scrum, com organização das atividades, divisão de tarefas e acompanhamento das entregas durante o desenvolvimento.
+O projeto foi desenvolvido utilizando a metodologia Scrum, com organização das atividades, divisão de tarefas e acompanhamento das entregas durante o desenvolvimento. Isto foi realizado utilizando Issues, Milestones e Project Board do GitHub.
 
 ## Segurança da API
 
@@ -28,9 +28,11 @@ X-API-Key: chave_de_acesso
 
 As rotas públicas, como a página inicial (`/`) e autenticação (`/login`), não necessitam de API Key.
 
+As senhas dos usuários também são armazenadas utilizando hash SHA-256 antes da persistência no banco de dados.
+
 ## Arquitetura e Padrões de Projeto
 
-Durante o desenvolvimento foram aplicados padrões de projeto para melhorar a organização e a manutenção do código.
+Durante o desenvolvimento foram aplicados padrões de projeto para melhorar a organização, reutilização e manutenção do código.
 
 ### Singleton
 
@@ -82,4 +84,18 @@ pip install -r requirements.txt
 
 ```bash
 uvicorn main:app --reload
+```
+
+## Estrutura do Projeto
+
+```
+bibliotecaEscolar-api
+│
+├── database.py
+├── main.py
+├── models.py
+├── security.py
+├── escolar.db
+├── .env.example
+└── README.md
 ```
