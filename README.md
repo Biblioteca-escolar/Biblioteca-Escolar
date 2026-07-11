@@ -58,3 +58,28 @@ As principais vantagens da utilização do ORM no projeto são:
 
 * Francisco Luan de Sousa Ferreira
 * Samuel Lucas dos Santos Oliveira
+
+## Como executar
+
+1. Clone o repositório.
+2. Crie um ambiente virtual.
+
+```bash
+python -m venv .venv
+```
+
+3. Ative o ambiente virtual.
+
+4. Instale as dependências.
+
+```bash
+pip install -r requirements.txt
+```
+
+5. Configure o arquivo `.env`.
+
+6. Execute a aplicação.
+
+```bash
+uvicorn main:app --reload
+```
