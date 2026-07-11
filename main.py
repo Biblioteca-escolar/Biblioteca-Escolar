@@ -237,21 +237,23 @@ def criar_usuario(
 ):
     verificar_matricula_duplicada(dados.matricula)
     novo_id = str(uuid.uuid4())
-    
+
+    senha_hash = hash_senha(dados.senha)
+
     with get_conn() as conn:
         conn.execute(
             "INSERT INTO usuarios (id, nome, matricula, tipo, email, senha, ativo) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (novo_id, dados.nome, dados.matricula, dados.tipo, dados.email, hash_senha(dados.senha), 1)
+            (novo_id, dados.nome, dados.matricula, dados.tipo, dados.email, senha_hash, 1)
         )
         conn.commit()
-    
+
     return Usuario(
         id=novo_id,
         nome=dados.nome,
         matricula=dados.matricula,
         tipo=dados.tipo,
         email=dados.email,
-        senha=hash_senha(dados.senha),
+        senha=senha_hash,
         ativo=True
     )
 
