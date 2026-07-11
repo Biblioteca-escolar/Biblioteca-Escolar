@@ -5,18 +5,22 @@ from typing import List, Optional
 import uuid
 
 from fastapi import FastAPI, HTTPException, status, Depends
-from models import (
+from sqlalchemy.orm import Session
+from sqlalchemy import select, func
+
+import models
+from schemas import (
     UsuarioEntrada, Usuario, LoginEntrada,
     LivroEntrada, Livro,
     EmprestimoEntrada, Emprestimo, RenovarEmprestimoEntrada,
     ReservaEntrada, Reserva,
     Multa, TipoUsuario
 )
-from database import get_conn, init_db
+from database import get_session, init_db
 from security import verificar_api_key, hash_senha
 
 
-app = FastAPI(title="API Biblioteca Escolar", version="1.0.0")
+app = FastAPI(title="API Biblioteca Escolar", version="2.0.0")
 
 DIAS_PADRAO_EMPRESTIMO = 7
 LIMITE_EMPRESTIMOS_ATIVOS = 3
@@ -32,171 +36,95 @@ def agora() -> datetime:
     return datetime.now()
 
 
-def encontrar_usuario(usuario_id: str) -> Usuario:
-    with get_conn() as conn:
-        cursor = conn.execute("SELECT * FROM usuarios WHERE id = ?", (usuario_id,))
-        row = cursor.fetchone()
-    if not row:
+# ---------- helpers de busca (agora via ORM) ----------
+
+def encontrar_usuario(session: Session, usuario_id: str) -> models.Usuario:
+    usuario = session.get(models.Usuario, usuario_id)
+    if not usuario:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
-    return Usuario(
-        id=row["id"],
-        nome=row["nome"],
-        matricula=row["matricula"],
-        tipo=row["tipo"],
-        email=row["email"],
-        senha=row["senha"],
-        ativo=bool(row["ativo"])
+    return usuario
+
+
+def encontrar_usuario_por_matricula(session: Session, matricula: str) -> models.Usuario:
+    usuario = session.scalar(
+        select(models.Usuario).where(models.Usuario.matricula == matricula)
     )
-
-
-def encontrar_usuario_por_matricula(matricula: str) -> Usuario:
-    with get_conn() as conn:
-        cursor = conn.execute("SELECT * FROM usuarios WHERE matricula = ?", (matricula,))
-        row = cursor.fetchone()
-    if not row:
+    if not usuario:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
-    return Usuario(
-        id=row["id"],
-        nome=row["nome"],
-        matricula=row["matricula"],
-        tipo=row["tipo"],
-        email=row["email"],
-        senha=row["senha"],
-        ativo=bool(row["ativo"])
-    )
+    return usuario
 
 
-def encontrar_livro(livro_id: str) -> Livro:
-    with get_conn() as conn:
-        cursor = conn.execute("SELECT * FROM livros WHERE id = ?", (livro_id,))
-        row = cursor.fetchone()
-    if not row:
+def encontrar_livro(session: Session, livro_id: str) -> models.Livro:
+    livro = session.get(models.Livro, livro_id)
+    if not livro:
         raise HTTPException(status_code=404, detail="Livro não encontrado")
-    return Livro(
-        id=row["id"],
-        titulo=row["titulo"],
-        autor=row["autor"],
-        isbn=row["isbn"],
-        quantidade_total=row["quantidade_total"],
-        quantidade_disponivel=row["quantidade_disponivel"],
-        ativo=bool(row["ativo"])
-    )
+    return livro
 
 
-def encontrar_emprestimo(emprestimo_id: str) -> Emprestimo:
-    with get_conn() as conn:
-        cursor = conn.execute("SELECT * FROM emprestimos WHERE id = ?", (emprestimo_id,))
-        row = cursor.fetchone()
-    if not row:
+def encontrar_emprestimo(session: Session, emprestimo_id: str) -> models.Emprestimo:
+    emprestimo = session.get(models.Emprestimo, emprestimo_id)
+    if not emprestimo:
         raise HTTPException(status_code=404, detail="Empréstimo não encontrado")
-    return Emprestimo(
-        id=row["id"],
-        usuario_id=row["usuario_id"],
-        livro_id=row["livro_id"],
-        data_emprestimo=row["data_emprestimo"],
-        data_prevista_devolucao=row["data_prevista_devolucao"],
-        data_devolucao=row["data_devolucao"],
-        status=row["status"],
-        multa=row["multa"]
-    )
+    return emprestimo
 
 
-def encontrar_reserva(reserva_id: str) -> Reserva:
-    with get_conn() as conn:
-        cursor = conn.execute("SELECT * FROM reservas WHERE id = ?", (reserva_id,))
-        row = cursor.fetchone()
-    if not row:
+def encontrar_reserva(session: Session, reserva_id: str) -> models.Reserva:
+    reserva = session.get(models.Reserva, reserva_id)
+    if not reserva:
         raise HTTPException(status_code=404, detail="Reserva não encontrada")
-    return Reserva(
-        id=row["id"],
-        usuario_id=row["usuario_id"],
-        livro_id=row["livro_id"],
-        data_reserva=row["data_reserva"],
-        status=row["status"]
+    return reserva
+
+
+def verificar_matricula_duplicada(session: Session, matricula: str, ignorar_id: Optional[str] = None) -> None:
+    stmt = select(models.Usuario).where(models.Usuario.matricula == matricula)
+    if ignorar_id:
+        stmt = stmt.where(models.Usuario.id != ignorar_id)
+    if session.scalar(stmt):
+        raise HTTPException(status_code=409, detail="Já existe um usuário com essa matrícula")
+
+
+def verificar_isbn_duplicado(session: Session, isbn: str, ignorar_id: Optional[str] = None) -> None:
+    stmt = select(models.Livro).where(models.Livro.isbn == isbn)
+    if ignorar_id:
+        stmt = stmt.where(models.Livro.id != ignorar_id)
+    if session.scalar(stmt):
+        raise HTTPException(status_code=409, detail="Já existe um livro com esse ISBN")
+
+
+def emprestimos_ativos_do_usuario(session: Session, usuario_id: str) -> List[models.Emprestimo]:
+    stmt = select(models.Emprestimo).where(
+        models.Emprestimo.usuario_id == usuario_id,
+        models.Emprestimo.status == "ativo",
     )
+    return list(session.scalars(stmt).all())
 
 
-def verificar_matricula_duplicada(matricula: str, ignorar_id: Optional[str] = None) -> None:
-    with get_conn() as conn:
-        cursor = conn.execute(
-            "SELECT * FROM usuarios WHERE matricula = ? AND id != ?",
-            (matricula, ignorar_id or "")
-        )
-        if cursor.fetchone():
-            raise HTTPException(status_code=409, detail="Já existe um usuário com essa matrícula")
+def emprestimo_ativo_do_livro(session: Session, livro_id: str) -> bool:
+    stmt = select(func.count()).select_from(models.Emprestimo).where(
+        models.Emprestimo.livro_id == livro_id,
+        models.Emprestimo.status == "ativo",
+    )
+    return session.scalar(stmt) > 0
 
 
-def verificar_isbn_duplicado(isbn: str, ignorar_id: Optional[str] = None) -> None:
-    with get_conn() as conn:
-        cursor = conn.execute(
-            "SELECT * FROM livros WHERE isbn = ? AND id != ?",
-            (isbn, ignorar_id or "")
-        )
-        if cursor.fetchone():
-            raise HTTPException(status_code=409, detail="Já existe um livro com esse ISBN")
+def reservas_ativas_do_livro(session: Session, livro_id: str) -> List[models.Reserva]:
+    stmt = select(models.Reserva).where(
+        models.Reserva.livro_id == livro_id,
+        models.Reserva.status == "ativa",
+    )
+    return list(session.scalars(stmt).all())
 
 
-def emprestimos_ativos_do_usuario(usuario_id: str) -> List[Emprestimo]:
-    with get_conn() as conn:
-        cursor = conn.execute(
-            "SELECT * FROM emprestimos WHERE usuario_id = ? AND status = 'ativo'",
-            (usuario_id,)
-        )
-        rows = cursor.fetchall()
-    return [
-        Emprestimo(
-            id=r["id"],
-            usuario_id=r["usuario_id"],
-            livro_id=r["livro_id"],
-            data_emprestimo=r["data_emprestimo"],
-            data_prevista_devolucao=r["data_prevista_devolucao"],
-            data_devolucao=r["data_devolucao"],
-            status=r["status"],
-            multa=r["multa"]
-        )
-        for r in rows
-    ]
-
-
-def emprestimo_ativo_do_livro(livro_id: str) -> bool:
-    with get_conn() as conn:
-        cursor = conn.execute(
-            "SELECT COUNT(*) as count FROM emprestimos WHERE livro_id = ? AND status = 'ativo'",
-            (livro_id,)
-        )
-        return cursor.fetchone()["count"] > 0
-
-
-def reservas_ativas_do_livro(livro_id: str) -> List[Reserva]:
-    with get_conn() as conn:
-        cursor = conn.execute(
-            "SELECT * FROM reservas WHERE livro_id = ? AND status = 'ativa'",
-            (livro_id,)
-        )
-        rows = cursor.fetchall()
-    return [
-        Reserva(
-            id=r["id"],
-            usuario_id=r["usuario_id"],
-            livro_id=r["livro_id"],
-            data_reserva=r["data_reserva"],
-            status=r["status"]
-        )
-        for r in rows
-    ]
-
-
-def tem_atraso(usuario_id: str) -> bool:
+def tem_atraso(session: Session, usuario_id: str) -> bool:
     hoje = agora()
-    with get_conn() as conn:
-        cursor = conn.execute(
-            "SELECT * FROM emprestimos WHERE usuario_id = ? AND status = 'ativo'",
-            (usuario_id,)
-        )
-        for row in cursor.fetchall():
-            prazo = datetime.fromisoformat(row["data_prevista_devolucao"])
-            if hoje > prazo:
-                return True
+    stmt = select(models.Emprestimo).where(
+        models.Emprestimo.usuario_id == usuario_id,
+        models.Emprestimo.status == "ativo",
+    )
+    for emprestimo in session.scalars(stmt).all():
+        prazo = datetime.fromisoformat(emprestimo.data_prevista_devolucao)
+        if hoje > prazo:
+            return True
     return False
 
 
@@ -208,16 +136,14 @@ def calcular_multa(data_prevista: str, data_devolucao: str) -> tuple[int, float]
     return atraso, valor
 
 
-
 @app.get("/")
 def raiz():
     return {"mensagem": "API Biblioteca Escolar funcionando! 📚"}
 
 
-
 @app.post("/login")
-def login(dados: LoginEntrada):
-    usuario = encontrar_usuario_por_matricula(dados.matricula)
+def login(dados: LoginEntrada, session: Session = Depends(get_session)):
+    usuario = encontrar_usuario_por_matricula(session, dados.matricula)
     if not usuario.ativo:
         raise HTTPException(status_code=403, detail="Usuário inativo")
     if usuario.senha != hash_senha(dados.senha):
@@ -230,145 +156,100 @@ def login(dados: LoginEntrada):
     }
 
 
+# ---------------- USUÁRIOS ----------------
 
 @app.post("/usuarios", response_model=Usuario, status_code=status.HTTP_201_CREATED, dependencies=[Depends(verificar_api_key)])
-def criar_usuario(
-    dados: UsuarioEntrada,
-):
-    verificar_matricula_duplicada(dados.matricula)
-    novo_id = str(uuid.uuid4())
+def criar_usuario(dados: UsuarioEntrada, session: Session = Depends(get_session)):
+    verificar_matricula_duplicada(session, dados.matricula)
 
-    senha_hash = hash_senha(dados.senha)
-
-    with get_conn() as conn:
-        conn.execute(
-            "INSERT INTO usuarios (id, nome, matricula, tipo, email, senha, ativo) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (novo_id, dados.nome, dados.matricula, dados.tipo, dados.email, senha_hash, 1)
-        )
-        conn.commit()
-
-    return Usuario(
-        id=novo_id,
+    usuario = models.Usuario(
+        id=str(uuid.uuid4()),
         nome=dados.nome,
         matricula=dados.matricula,
         tipo=dados.tipo,
         email=dados.email,
-        senha=senha_hash,
-        ativo=True
+        senha=hash_senha(dados.senha),
+        ativo=True,
     )
+    session.add(usuario)
+    session.commit()
+    session.refresh(usuario)
+    return usuario
 
 
 @app.get("/usuarios", response_model=List[Usuario], dependencies=[Depends(verificar_api_key)])
 def listar_usuarios(
     ativo: Optional[bool] = None,
     tipo: Optional[TipoUsuario] = None,
+    session: Session = Depends(get_session),
 ):
-    with get_conn() as conn:
-        query = "SELECT * FROM usuarios WHERE 1=1"
-        params = []
-        
-        if ativo is not None:
-            query += " AND ativo = ?"
-            params.append(1 if ativo else 0)
-        if tipo is not None:
-            query += " AND tipo = ?"
-            params.append(tipo)
-        
-        cursor = conn.execute(query, params)
-        rows = cursor.fetchall()
-    
-    return [
-        Usuario(
-            id=r["id"],
-            nome=r["nome"],
-            matricula=r["matricula"],
-            tipo=r["tipo"],
-            email=r["email"],
-            senha=r["senha"],
-            ativo=bool(r["ativo"])
-        )
-        for r in rows
-    ]
+    stmt = select(models.Usuario)
+    if ativo is not None:
+        stmt = stmt.where(models.Usuario.ativo == ativo)
+    if tipo is not None:
+        stmt = stmt.where(models.Usuario.tipo == tipo)
+    return list(session.scalars(stmt).all())
 
 
 @app.get("/usuarios/{usuario_id}", response_model=Usuario, dependencies=[Depends(verificar_api_key)])
-def buscar_usuario(
-    usuario_id: str,
-):
-    return encontrar_usuario(usuario_id)
+def buscar_usuario(usuario_id: str, session: Session = Depends(get_session)):
+    return encontrar_usuario(session, usuario_id)
 
 
 @app.put("/usuarios/{usuario_id}", response_model=Usuario, dependencies=[Depends(verificar_api_key)])
-def editar_usuario(
-    usuario_id: str,
-    dados: UsuarioEntrada,
-):
-    usuario = encontrar_usuario(usuario_id)
-    verificar_matricula_duplicada(dados.matricula, ignorar_id=usuario_id)
-    
-    with get_conn() as conn:
-        conn.execute(
-            "UPDATE usuarios SET nome = ?, matricula = ?, tipo = ?, email = ?, senha = ? WHERE id = ?",
-            (dados.nome, dados.matricula, dados.tipo, dados.email, hash_senha(dados.senha), usuario_id)
-        )
-        conn.commit()
-    
-    return Usuario(
-        id=usuario_id,
-        nome=dados.nome,
-        matricula=dados.matricula,
-        tipo=dados.tipo,
-        email=dados.email,
-        senha=hash_senha(dados.senha),
-        ativo=usuario.ativo
-    )
+def editar_usuario(usuario_id: str, dados: UsuarioEntrada, session: Session = Depends(get_session)):
+    usuario = encontrar_usuario(session, usuario_id)
+    verificar_matricula_duplicada(session, dados.matricula, ignorar_id=usuario_id)
+
+    usuario.nome = dados.nome
+    usuario.matricula = dados.matricula
+    usuario.tipo = dados.tipo
+    usuario.email = dados.email
+    usuario.senha = hash_senha(dados.senha)
+
+    session.commit()
+    session.refresh(usuario)
+    return usuario
 
 
 @app.delete("/usuarios/{usuario_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(verificar_api_key)])
-def remover_usuario(
-    usuario_id: str,
-):
-    usuario = encontrar_usuario(usuario_id)
-    if emprestimos_ativos_do_usuario(usuario_id):
+def remover_usuario(usuario_id: str, session: Session = Depends(get_session)):
+    usuario = encontrar_usuario(session, usuario_id)
+    if emprestimos_ativos_do_usuario(session, usuario_id):
         raise HTTPException(status_code=409, detail="Não é possível remover usuário com empréstimos ativos")
-    
-    with get_conn() as conn:
-        cursor = conn.execute(
-            "SELECT COUNT(*) as count FROM reservas WHERE usuario_id = ? AND status = 'ativa'",
-            (usuario_id,)
+
+    reservas_ativas = session.scalar(
+        select(func.count()).select_from(models.Reserva).where(
+            models.Reserva.usuario_id == usuario_id,
+            models.Reserva.status == "ativa",
         )
-        if cursor.fetchone()["count"] > 0:
-            raise HTTPException(status_code=409, detail="Não é possível remover usuário com reservas ativas")
-    
-    with get_conn() as conn:
-        conn.execute("UPDATE usuarios SET ativo = 0 WHERE id = ?", (usuario_id,))
-        conn.commit()
+    )
+    if reservas_ativas > 0:
+        raise HTTPException(status_code=409, detail="Não é possível remover usuário com reservas ativas")
+
+    usuario.ativo = False
+    session.commit()
 
 
+# ---------------- LIVROS ----------------
 
 @app.post("/livros", response_model=Livro, status_code=status.HTTP_201_CREATED, dependencies=[Depends(verificar_api_key)])
-def criar_livro(
-    dados: LivroEntrada,
-):
-    verificar_isbn_duplicado(dados.isbn)
-    novo_id = str(uuid.uuid4())
-    
-    with get_conn() as conn:
-        conn.execute(
-            "INSERT INTO livros (id, titulo, autor, isbn, quantidade_total, quantidade_disponivel, ativo) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (novo_id, dados.titulo, dados.autor, dados.isbn, dados.quantidade_total, dados.quantidade_total, 1)
-        )
-        conn.commit()
-    
-    return Livro(
-        id=novo_id,
+def criar_livro(dados: LivroEntrada, session: Session = Depends(get_session)):
+    verificar_isbn_duplicado(session, dados.isbn)
+
+    livro = models.Livro(
+        id=str(uuid.uuid4()),
         titulo=dados.titulo,
         autor=dados.autor,
         isbn=dados.isbn,
         quantidade_total=dados.quantidade_total,
         quantidade_disponivel=dados.quantidade_total,
-        ativo=True
+        ativo=True,
     )
+    session.add(livro)
+    session.commit()
+    session.refresh(livro)
+    return livro
 
 
 @app.get("/livros", response_model=List[Livro], dependencies=[Depends(verificar_api_key)])
@@ -377,57 +258,32 @@ def listar_livros(
     titulo: Optional[str] = None,
     autor: Optional[str] = None,
     isbn: Optional[str] = None,
+    session: Session = Depends(get_session),
 ):
-    with get_conn() as conn:
-        query = "SELECT * FROM livros WHERE 1=1"
-        params = []
-        
-        if disponivel is not None:
-            if disponivel:
-                query += " AND quantidade_disponivel > 0"
-            else:
-                query += " AND quantidade_disponivel <= 0"
-        if titulo:
-            query += " AND LOWER(titulo) LIKE LOWER(?)"
-            params.append(f"%{titulo}%")
-        if autor:
-            query += " AND LOWER(autor) LIKE LOWER(?)"
-            params.append(f"%{autor}%")
-        if isbn:
-            query += " AND LOWER(isbn) LIKE LOWER(?)"
-            params.append(f"%{isbn}%")
-        
-        cursor = conn.execute(query, params)
-        rows = cursor.fetchall()
-    
-    return [
-        Livro(
-            id=r["id"],
-            titulo=r["titulo"],
-            autor=r["autor"],
-            isbn=r["isbn"],
-            quantidade_total=r["quantidade_total"],
-            quantidade_disponivel=r["quantidade_disponivel"],
-            ativo=bool(r["ativo"])
-        )
-        for r in rows
-    ]
+    stmt = select(models.Livro)
+    if disponivel is not None:
+        if disponivel:
+            stmt = stmt.where(models.Livro.quantidade_disponivel > 0)
+        else:
+            stmt = stmt.where(models.Livro.quantidade_disponivel <= 0)
+    if titulo:
+        stmt = stmt.where(models.Livro.titulo.ilike(f"%{titulo}%"))
+    if autor:
+        stmt = stmt.where(models.Livro.autor.ilike(f"%{autor}%"))
+    if isbn:
+        stmt = stmt.where(models.Livro.isbn.ilike(f"%{isbn}%"))
+    return list(session.scalars(stmt).all())
 
 
 @app.get("/livros/{livro_id}", response_model=Livro, dependencies=[Depends(verificar_api_key)])
-def buscar_livro(
-    livro_id: str,
-):
-    return encontrar_livro(livro_id)
+def buscar_livro(livro_id: str, session: Session = Depends(get_session)):
+    return encontrar_livro(session, livro_id)
 
 
 @app.put("/livros/{livro_id}", response_model=Livro, dependencies=[Depends(verificar_api_key)])
-def editar_livro(
-    livro_id: str,
-    dados: LivroEntrada,
-):
-    livro = encontrar_livro(livro_id)
-    verificar_isbn_duplicado(dados.isbn, ignorar_id=livro_id)
+def editar_livro(livro_id: str, dados: LivroEntrada, session: Session = Depends(get_session)):
+    livro = encontrar_livro(session, livro_id)
+    verificar_isbn_duplicado(session, dados.isbn, ignorar_id=livro_id)
 
     copias_emprestadas = livro.quantidade_total - livro.quantidade_disponivel
     if dados.quantidade_total < copias_emprestadas:
@@ -436,258 +292,153 @@ def editar_livro(
             detail="A quantidade total não pode ser menor que a quantidade já emprestada",
         )
 
-    nova_quantidade_disponivel = dados.quantidade_total - copias_emprestadas
-    
-    with get_conn() as conn:
-        conn.execute(
-            "UPDATE livros SET titulo = ?, autor = ?, isbn = ?, quantidade_total = ?, quantidade_disponivel = ? WHERE id = ?",
-            (dados.titulo, dados.autor, dados.isbn, dados.quantidade_total, nova_quantidade_disponivel, livro_id)
-        )
-        conn.commit()
-    
-    return Livro(
-        id=livro_id,
-        titulo=dados.titulo,
-        autor=dados.autor,
-        isbn=dados.isbn,
-        quantidade_total=dados.quantidade_total,
-        quantidade_disponivel=nova_quantidade_disponivel,
-        ativo=livro.ativo
-    )
+    livro.titulo = dados.titulo
+    livro.autor = dados.autor
+    livro.isbn = dados.isbn
+    livro.quantidade_total = dados.quantidade_total
+    livro.quantidade_disponivel = dados.quantidade_total - copias_emprestadas
+
+    session.commit()
+    session.refresh(livro)
+    return livro
 
 
 @app.delete("/livros/{livro_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(verificar_api_key)])
-def remover_livro(
-    livro_id: str,
-):
-    livro = encontrar_livro(livro_id)
-    if emprestimo_ativo_do_livro(livro_id):
+def remover_livro(livro_id: str, session: Session = Depends(get_session)):
+    livro = encontrar_livro(session, livro_id)
+    if emprestimo_ativo_do_livro(session, livro_id):
         raise HTTPException(status_code=409, detail="Não é possível remover livro com empréstimo ativo")
-    if reservas_ativas_do_livro(livro_id):
+    if reservas_ativas_do_livro(session, livro_id):
         raise HTTPException(status_code=409, detail="Não é possível remover livro com reservas ativas")
-    
-    with get_conn() as conn:
-        conn.execute("UPDATE livros SET ativo = 0 WHERE id = ?", (livro_id,))
-        conn.commit()
+
+    livro.ativo = False
+    session.commit()
 
 
+# ---------------- EMPRÉSTIMOS ----------------
 
 @app.post("/emprestimos", response_model=Emprestimo, status_code=status.HTTP_201_CREATED, dependencies=[Depends(verificar_api_key)])
-def realizar_emprestimo(
-    dados: EmprestimoEntrada,
-):
-    usuario = encontrar_usuario(dados.usuario_id)
-    livro = encontrar_livro(dados.livro_id)
+def realizar_emprestimo(dados: EmprestimoEntrada, session: Session = Depends(get_session)):
+    usuario = encontrar_usuario(session, dados.usuario_id)
+    livro = encontrar_livro(session, dados.livro_id)
 
     if not usuario.ativo:
         raise HTTPException(status_code=403, detail="Usuário inativo")
     if usuario.tipo == "funcionario":
         raise HTTPException(status_code=403, detail="Funcionários não realizam empréstimos")
-    if tem_atraso(usuario.id):
+    if tem_atraso(session, usuario.id):
         raise HTTPException(status_code=409, detail="Usuário possui empréstimo em atraso")
-    if len(emprestimos_ativos_do_usuario(usuario.id)) >= LIMITE_EMPRESTIMOS_ATIVOS:
+    if len(emprestimos_ativos_do_usuario(session, usuario.id)) >= LIMITE_EMPRESTIMOS_ATIVOS:
         raise HTTPException(status_code=409, detail="Usuário atingiu o limite de empréstimos ativos")
     if livro.quantidade_disponivel <= 0:
         raise HTTPException(status_code=409, detail="Livro indisponível")
-    if any(r for r in reservas_ativas_do_livro(livro.id) if r.usuario_id != usuario.id):
+    if any(r for r in reservas_ativas_do_livro(session, livro.id) if r.usuario_id != usuario.id):
         raise HTTPException(status_code=409, detail="Livro reservado por outro usuário")
 
-    novo_id = str(uuid.uuid4())
     data_emprestimo = agora()
     data_prevista = data_emprestimo + timedelta(days=DIAS_PADRAO_EMPRESTIMO)
 
-    with get_conn() as conn:
-        conn.execute(
-            "UPDATE livros SET quantidade_disponivel = quantidade_disponivel - 1 WHERE id = ?",
-            (livro.id,)
-        )
-        conn.execute(
-            "INSERT INTO emprestimos (id, usuario_id, livro_id, data_emprestimo, data_prevista_devolucao, data_devolucao, status, multa) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (novo_id, usuario.id, livro.id, data_emprestimo.isoformat(), data_prevista.isoformat(), None, "ativo", 0.0)
-        )
-        conn.commit()
+    livro.quantidade_disponivel -= 1
 
-    return Emprestimo(
-        id=novo_id,
+    emprestimo = models.Emprestimo(
+        id=str(uuid.uuid4()),
         usuario_id=usuario.id,
         livro_id=livro.id,
         data_emprestimo=data_emprestimo.isoformat(),
         data_prevista_devolucao=data_prevista.isoformat(),
         data_devolucao=None,
         status="ativo",
-        multa=0.0
+        multa=0.0,
     )
+    session.add(emprestimo)
+    session.commit()
+    session.refresh(emprestimo)
+    return emprestimo
 
 
 @app.get("/emprestimos", response_model=List[Emprestimo], dependencies=[Depends(verificar_api_key)])
-def listar_emprestimos(
-    status_: Optional[str] = None,
-):
-    with get_conn() as conn:
-        query = "SELECT * FROM emprestimos WHERE 1=1"
-        params = []
-        
-        if status_:
-            query += " AND status = ?"
-            params.append(status_)
-        
-        cursor = conn.execute(query, params)
-        rows = cursor.fetchall()
-    
-    return [
-        Emprestimo(
-            id=r["id"],
-            usuario_id=r["usuario_id"],
-            livro_id=r["livro_id"],
-            data_emprestimo=r["data_emprestimo"],
-            data_prevista_devolucao=r["data_prevista_devolucao"],
-            data_devolucao=r["data_devolucao"],
-            status=r["status"],
-            multa=r["multa"]
-        )
-        for r in rows
-    ]
+def listar_emprestimos(status_: Optional[str] = None, session: Session = Depends(get_session)):
+    stmt = select(models.Emprestimo)
+    if status_:
+        stmt = stmt.where(models.Emprestimo.status == status_)
+    return list(session.scalars(stmt).all())
 
 
 @app.get("/emprestimos/{emprestimo_id}", response_model=Emprestimo, dependencies=[Depends(verificar_api_key)])
-def buscar_emprestimo(
-    emprestimo_id: str,
-):
-    return encontrar_emprestimo(emprestimo_id)
+def buscar_emprestimo(emprestimo_id: str, session: Session = Depends(get_session)):
+    return encontrar_emprestimo(session, emprestimo_id)
 
 
 @app.post("/emprestimos/{emprestimo_id}/devolver", response_model=Emprestimo, dependencies=[Depends(verificar_api_key)])
-def devolver_emprestimo(
-    emprestimo_id: str,
-):
-    emprestimo = encontrar_emprestimo(emprestimo_id)
+def devolver_emprestimo(emprestimo_id: str, session: Session = Depends(get_session)):
+    emprestimo = encontrar_emprestimo(session, emprestimo_id)
     if emprestimo.status == "devolvido":
         raise HTTPException(status_code=409, detail="Este empréstimo já foi devolvido")
 
-    livro = encontrar_livro(emprestimo.livro_id)
+    livro = encontrar_livro(session, emprestimo.livro_id)
     data_devolucao = agora()
     atraso, valor = calcular_multa(emprestimo.data_prevista_devolucao, data_devolucao.isoformat())
 
-    with get_conn() as conn:
-        conn.execute(
-            "UPDATE emprestimos SET data_devolucao = ?, status = ?, multa = ? WHERE id = ?",
-            (data_devolucao.isoformat(), "devolvido", valor, emprestimo_id)
-        )
-        conn.execute(
-            "UPDATE livros SET quantidade_disponivel = MIN(quantidade_total, quantidade_disponivel + 1) WHERE id = ?",
-            (livro.id,)
-        )
-        
-        if atraso > 0:
-            multa_id = str(uuid.uuid4())
-            conn.execute(
-                "INSERT INTO multas (id, emprestimo_id, usuario_id, livro_id, valor, dias_atraso, data_registro) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (multa_id, emprestimo_id, emprestimo.usuario_id, emprestimo.livro_id, valor, atraso, data_devolucao.isoformat())
-            )
-        
-        conn.commit()
+    emprestimo.data_devolucao = data_devolucao.isoformat()
+    emprestimo.status = "devolvido"
+    emprestimo.multa = valor
 
-    return Emprestimo(
-        id=emprestimo_id,
-        usuario_id=emprestimo.usuario_id,
-        livro_id=emprestimo.livro_id,
-        data_emprestimo=emprestimo.data_emprestimo,
-        data_prevista_devolucao=emprestimo.data_prevista_devolucao,
-        data_devolucao=data_devolucao.isoformat(),
-        status="devolvido",
-        multa=valor
-    )
+    livro.quantidade_disponivel = min(livro.quantidade_total, livro.quantidade_disponivel + 1)
+
+    if atraso > 0:
+        multa = models.Multa(
+            id=str(uuid.uuid4()),
+            emprestimo_id=emprestimo_id,
+            usuario_id=emprestimo.usuario_id,
+            livro_id=emprestimo.livro_id,
+            valor=valor,
+            dias_atraso=atraso,
+            data_registro=data_devolucao.isoformat(),
+        )
+        session.add(multa)
+
+    session.commit()
+    session.refresh(emprestimo)
+    return emprestimo
 
 
 @app.put("/emprestimos/{emprestimo_id}/renovar", response_model=Emprestimo, dependencies=[Depends(verificar_api_key)])
-def renovar_emprestimo(
-    emprestimo_id: str,
-    dados: RenovarEmprestimoEntrada,
-):
-    emprestimo = encontrar_emprestimo(emprestimo_id)
+def renovar_emprestimo(emprestimo_id: str, dados: RenovarEmprestimoEntrada, session: Session = Depends(get_session)):
+    emprestimo = encontrar_emprestimo(session, emprestimo_id)
     if emprestimo.status == "devolvido":
         raise HTTPException(status_code=409, detail="Não é possível renovar um empréstimo devolvido")
 
-    livro = encontrar_livro(emprestimo.livro_id)
-    if any(r for r in reservas_ativas_do_livro(livro.id) if r.usuario_id != emprestimo.usuario_id):
+    if any(r for r in reservas_ativas_do_livro(session, emprestimo.livro_id) if r.usuario_id != emprestimo.usuario_id):
         raise HTTPException(status_code=409, detail="Não é possível renovar: há reserva ativa para este livro")
 
     nova_data = datetime.fromisoformat(emprestimo.data_prevista_devolucao) + timedelta(days=dados.dias_adicionais)
-    
-    with get_conn() as conn:
-        conn.execute(
-            "UPDATE emprestimos SET data_prevista_devolucao = ? WHERE id = ?",
-            (nova_data.isoformat(), emprestimo_id)
-        )
-        conn.commit()
-    
-    return Emprestimo(
-        id=emprestimo_id,
-        usuario_id=emprestimo.usuario_id,
-        livro_id=emprestimo.livro_id,
-        data_emprestimo=emprestimo.data_emprestimo,
-        data_prevista_devolucao=nova_data.isoformat(),
-        data_devolucao=emprestimo.data_devolucao,
-        status=emprestimo.status,
-        multa=emprestimo.multa
-    )
+    emprestimo.data_prevista_devolucao = nova_data.isoformat()
+
+    session.commit()
+    session.refresh(emprestimo)
+    return emprestimo
 
 
 @app.get("/usuarios/{usuario_id}/emprestimos", response_model=List[Emprestimo], dependencies=[Depends(verificar_api_key)])
-def emprestimos_do_usuario(
-    usuario_id: str,
-):
-    encontrar_usuario(usuario_id)
-    with get_conn() as conn:
-        cursor = conn.execute("SELECT * FROM emprestimos WHERE usuario_id = ?", (usuario_id,))
-        rows = cursor.fetchall()
-    
-    return [
-        Emprestimo(
-            id=r["id"],
-            usuario_id=r["usuario_id"],
-            livro_id=r["livro_id"],
-            data_emprestimo=r["data_emprestimo"],
-            data_prevista_devolucao=r["data_prevista_devolucao"],
-            data_devolucao=r["data_devolucao"],
-            status=r["status"],
-            multa=r["multa"]
-        )
-        for r in rows
-    ]
+def emprestimos_do_usuario(usuario_id: str, session: Session = Depends(get_session)):
+    encontrar_usuario(session, usuario_id)
+    stmt = select(models.Emprestimo).where(models.Emprestimo.usuario_id == usuario_id)
+    return list(session.scalars(stmt).all())
 
 
 @app.get("/livros/{livro_id}/emprestimos", response_model=List[Emprestimo], dependencies=[Depends(verificar_api_key)])
-def emprestimos_do_livro(
-    livro_id: str,
-):
-    encontrar_livro(livro_id)
-    with get_conn() as conn:
-        cursor = conn.execute("SELECT * FROM emprestimos WHERE livro_id = ?", (livro_id,))
-        rows = cursor.fetchall()
-    
-    return [
-        Emprestimo(
-            id=r["id"],
-            usuario_id=r["usuario_id"],
-            livro_id=r["livro_id"],
-            data_emprestimo=r["data_emprestimo"],
-            data_prevista_devolucao=r["data_prevista_devolucao"],
-            data_devolucao=r["data_devolucao"],
-            status=r["status"],
-            multa=r["multa"]
-        )
-        for r in rows
-    ]
+def emprestimos_do_livro(livro_id: str, session: Session = Depends(get_session)):
+    encontrar_livro(session, livro_id)
+    stmt = select(models.Emprestimo).where(models.Emprestimo.livro_id == livro_id)
+    return list(session.scalars(stmt).all())
 
 
+# ---------------- RESERVAS ----------------
 
 @app.post("/reservas", response_model=Reserva, status_code=status.HTTP_201_CREATED, dependencies=[Depends(verificar_api_key)])
-def criar_reserva(
-    dados: ReservaEntrada,
-):
-    usuario = encontrar_usuario(dados.usuario_id)
-    livro = encontrar_livro(dados.livro_id)
+def criar_reserva(dados: ReservaEntrada, session: Session = Depends(get_session)):
+    usuario = encontrar_usuario(session, dados.usuario_id)
+    livro = encontrar_livro(session, dados.livro_id)
 
     if not usuario.ativo:
         raise HTTPException(status_code=403, detail="Usuário inativo")
@@ -695,184 +446,101 @@ def criar_reserva(
         raise HTTPException(status_code=403, detail="Funcionários não realizam reservas")
     if livro.quantidade_disponivel > 0:
         raise HTTPException(status_code=409, detail="Reserva permitida apenas para livros indisponíveis")
-    
-    with get_conn() as conn:
-        cursor = conn.execute(
-            "SELECT COUNT(*) as count FROM reservas WHERE usuario_id = ? AND livro_id = ? AND status = 'ativa'",
-            (usuario.id, livro.id)
-        )
-        if cursor.fetchone()["count"] > 0:
-            raise HTTPException(status_code=409, detail="Usuário já possui reserva ativa para este livro")
 
-    novo_id = str(uuid.uuid4())
-    
-    with get_conn() as conn:
-        conn.execute(
-            "INSERT INTO reservas (id, usuario_id, livro_id, data_reserva, status) VALUES (?, ?, ?, ?, ?)",
-            (novo_id, usuario.id, livro.id, agora().isoformat(), "ativa")
+    ja_reservado = session.scalar(
+        select(func.count()).select_from(models.Reserva).where(
+            models.Reserva.usuario_id == usuario.id,
+            models.Reserva.livro_id == livro.id,
+            models.Reserva.status == "ativa",
         )
-        conn.commit()
+    )
+    if ja_reservado > 0:
+        raise HTTPException(status_code=409, detail="Usuário já possui reserva ativa para este livro")
 
-    return Reserva(
-        id=novo_id,
+    reserva = models.Reserva(
+        id=str(uuid.uuid4()),
         usuario_id=usuario.id,
         livro_id=livro.id,
         data_reserva=agora().isoformat(),
-        status="ativa"
+        status="ativa",
     )
+    session.add(reserva)
+    session.commit()
+    session.refresh(reserva)
+    return reserva
 
 
 @app.get("/reservas", response_model=List[Reserva], dependencies=[Depends(verificar_api_key)])
-def listar_reservas(
-    status_: Optional[str] = None,
-):
-    with get_conn() as conn:
-        query = "SELECT * FROM reservas WHERE 1=1"
-        params = []
-        
-        if status_:
-            query += " AND status = ?"
-            params.append(status_)
-        
-        cursor = conn.execute(query, params)
-        rows = cursor.fetchall()
-    
-    return [
-        Reserva(
-            id=r["id"],
-            usuario_id=r["usuario_id"],
-            livro_id=r["livro_id"],
-            data_reserva=r["data_reserva"],
-            status=r["status"]
-        )
-        for r in rows
-    ]
+def listar_reservas(status_: Optional[str] = None, session: Session = Depends(get_session)):
+    stmt = select(models.Reserva)
+    if status_:
+        stmt = stmt.where(models.Reserva.status == status_)
+    return list(session.scalars(stmt).all())
 
 
 @app.get("/reservas/{reserva_id}", response_model=Reserva, dependencies=[Depends(verificar_api_key)])
-def buscar_reserva(
-    reserva_id: str,
-):
-    return encontrar_reserva(reserva_id)
+def buscar_reserva(reserva_id: str, session: Session = Depends(get_session)):
+    return encontrar_reserva(session, reserva_id)
 
 
 @app.delete("/reservas/{reserva_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(verificar_api_key)])
-def cancelar_reserva(
-    reserva_id: str,
-):
-    reserva = encontrar_reserva(reserva_id)
+def cancelar_reserva(reserva_id: str, session: Session = Depends(get_session)):
+    reserva = encontrar_reserva(session, reserva_id)
     if reserva.status != "ativa":
         raise HTTPException(status_code=409, detail="Só é possível cancelar reservas ativas")
-    
-    with get_conn() as conn:
-        conn.execute("UPDATE reservas SET status = 'cancelada' WHERE id = ?", (reserva_id,))
-        conn.commit()
+
+    reserva.status = "cancelada"
+    session.commit()
 
 
 @app.get("/usuarios/{usuario_id}/reservas", response_model=List[Reserva], dependencies=[Depends(verificar_api_key)])
-def reservas_do_usuario(
-    usuario_id: str,
-):
-    encontrar_usuario(usuario_id)
-    with get_conn() as conn:
-        cursor = conn.execute("SELECT * FROM reservas WHERE usuario_id = ?", (usuario_id,))
-        rows = cursor.fetchall()
-    
-    return [
-        Reserva(
-            id=r["id"],
-            usuario_id=r["usuario_id"],
-            livro_id=r["livro_id"],
-            data_reserva=r["data_reserva"],
-            status=r["status"]
-        )
-        for r in rows
-    ]
+def reservas_do_usuario(usuario_id: str, session: Session = Depends(get_session)):
+    encontrar_usuario(session, usuario_id)
+    stmt = select(models.Reserva).where(models.Reserva.usuario_id == usuario_id)
+    return list(session.scalars(stmt).all())
 
 
 @app.get("/livros/{livro_id}/reservas", response_model=List[Reserva], dependencies=[Depends(verificar_api_key)])
-def reservas_do_livro(
-    livro_id: str,
-):
-    encontrar_livro(livro_id)
-    with get_conn() as conn:
-        cursor = conn.execute("SELECT * FROM reservas WHERE livro_id = ?", (livro_id,))
-        rows = cursor.fetchall()
-    
-    return [
-        Reserva(
-            id=r["id"],
-            usuario_id=r["usuario_id"],
-            livro_id=r["livro_id"],
-            data_reserva=r["data_reserva"],
-            status=r["status"]
-        )
-        for r in rows
-    ]
+def reservas_do_livro(livro_id: str, session: Session = Depends(get_session)):
+    encontrar_livro(session, livro_id)
+    stmt = select(models.Reserva).where(models.Reserva.livro_id == livro_id)
+    return list(session.scalars(stmt).all())
 
+
+# ---------------- MULTAS ----------------
 
 @app.get("/multas", response_model=List[Multa], dependencies=[Depends(verificar_api_key)])
-def listar_multas():
-    with get_conn() as conn:
-        cursor = conn.execute("SELECT * FROM multas")
-        rows = cursor.fetchall()
-    
-    return [
-        Multa(
-            id=r["id"],
-            emprestimo_id=r["emprestimo_id"],
-            usuario_id=r["usuario_id"],
-            livro_id=r["livro_id"],
-            valor=r["valor"],
-            dias_atraso=r["dias_atraso"],
-            data_registro=r["data_registro"]
-        )
-        for r in rows
-    ]
+def listar_multas(session: Session = Depends(get_session)):
+    return list(session.scalars(select(models.Multa)).all())
 
 
 @app.get("/usuarios/{usuario_id}/multas", response_model=List[Multa], dependencies=[Depends(verificar_api_key)])
-def multas_do_usuario(
-    usuario_id: str,
-):
-    encontrar_usuario(usuario_id)
-    with get_conn() as conn:
-        cursor = conn.execute("SELECT * FROM multas WHERE usuario_id = ?", (usuario_id,))
-        rows = cursor.fetchall()
-    
-    return [
-        Multa(
-            id=r["id"],
-            emprestimo_id=r["emprestimo_id"],
-            usuario_id=r["usuario_id"],
-            livro_id=r["livro_id"],
-            valor=r["valor"],
-            dias_atraso=r["dias_atraso"],
-            data_registro=r["data_registro"]
-        )
-        for r in rows
-    ]
+def multas_do_usuario(usuario_id: str, session: Session = Depends(get_session)):
+    encontrar_usuario(session, usuario_id)
+    stmt = select(models.Multa).where(models.Multa.usuario_id == usuario_id)
+    return list(session.scalars(stmt).all())
 
+
+# ---------------- NOTIFICAÇÕES ----------------
 
 @app.get("/notificacoes/atrasos", dependencies=[Depends(verificar_api_key)])
-def listar_atrasos():
+def listar_atrasos(session: Session = Depends(get_session)):
     hoje = agora()
     atrasos = []
-    
-    with get_conn() as conn:
-        cursor = conn.execute("SELECT * FROM emprestimos WHERE status = 'ativo'")
-        for row in cursor.fetchall():
-            prazo = datetime.fromisoformat(row["data_prevista_devolucao"])
-            if hoje > prazo:
-                dias = max(0, (hoje.date() - prazo.date()).days)
-                atrasos.append(
-                    {
-                        "emprestimo_id": row["id"],
-                        "usuario_id": row["usuario_id"],
-                        "livro_id": row["livro_id"],
-                        "dias_atraso": dias,
-                        "multa_estimativa": round(dias * VALOR_MULTA_POR_DIA, 2),
-                    }
-                )
-    
+
+    stmt = select(models.Emprestimo).where(models.Emprestimo.status == "ativo")
+    for emprestimo in session.scalars(stmt).all():
+        prazo = datetime.fromisoformat(emprestimo.data_prevista_devolucao)
+        if hoje > prazo:
+            dias = max(0, (hoje.date() - prazo.date()).days)
+            atrasos.append(
+                {
+                    "emprestimo_id": emprestimo.id,
+                    "usuario_id": emprestimo.usuario_id,
+                    "livro_id": emprestimo.livro_id,
+                    "dias_atraso": dias,
+                    "multa_estimativa": round(dias * VALOR_MULTA_POR_DIA, 2),
+                }
+            )
+
     return {"quantidade": len(atrasos), "atrasos": atrasos}
