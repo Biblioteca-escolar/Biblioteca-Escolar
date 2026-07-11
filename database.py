@@ -3,10 +3,29 @@ import sqlite3
 DB_PATH = "escolar.db"
 
 
+class DatabaseConfig:
+    """Singleton: configuração única do banco para toda a aplicação."""
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance.db_path = DB_PATH
+            cls._instance.foreign_keys = True
+            cls._instance.encoding = "UTF-8"
+        return cls._instance
+
+
 def get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    """Factory: cria e devolve uma conexão configurada."""
+    config = DatabaseConfig()
+
+    conn = sqlite3.connect(config.db_path)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
+
+    if config.foreign_keys:
+        conn.execute("PRAGMA foreign_keys = ON")
+
     return conn
 
 
