@@ -6,7 +6,8 @@ Sistema desenvolvido para a disciplina de Projeto e Desenvolvimento de Software.
 
 * Python
 * FastAPI
-* Banco de dados
+* SQLAlchemy (ORM)
+* SQLite
 * API REST
 
 ## Metodologia
@@ -38,6 +39,21 @@ O padrão Singleton foi utilizado na classe `DatabaseConfig`, garantindo uma ún
 ### Factory
 
 O padrão Factory foi aplicado por meio da função `get_conn()`, responsável por criar conexões com o banco de dados já configuradas, centralizando a configuração e evitando repetição de código.
+
+## Mapeamento Objeto-Relacional (ORM)
+
+A aplicação utiliza o SQLAlchemy como ORM (Object-Relational Mapping), substituindo o acesso direto ao banco de dados por meio de comandos SQL.
+
+Com o ORM, as tabelas do banco são representadas por classes Python, facilitando a manipulação dos dados, reduzindo a quantidade de código SQL e tornando a aplicação mais organizada e de fácil manutenção.
+
+As principais vantagens da utilização do ORM no projeto são:
+
+- Mapeamento das entidades do sistema para classes Python;
+- Operações de persistência utilizando objetos em vez de comandos SQL;
+- Maior organização e legibilidade do código;
+- Facilidade de manutenção e evolução da aplicação;
+- Integração com o banco de dados por meio de sessões (`Session`) do SQLAlchemy.
+
 ## Equipe
 
 * Francisco Luan de Sousa Ferreira
